@@ -4,13 +4,13 @@ import requests, os, re, time
 app = FastAPI()
 
 # === CONFIG ===
-HUBSPOT_TOKEN = os.getenv("HUBSPOT_TOKEN")  # pat-xxxxxx
+HUBSPOT_TOKEN = os.getenv("HUBSPOT_TOKEN")  
 DEFAULT_OWNER_EMAIL = os.getenv("DEFAULT_OWNER_EMAIL", "ray@two.travel")
 HUBSPOT_BASE = "https://api.hubapi.com"
 
 # ==== DUEÑOS POR SERVICIO Y CIUDAD (normalizados) ====
 SERVICE_OWNER_MAP = {
-    # Solo definimos los servicios que tienen dueño fijo
+    # servicios que tienen dueño fijo
     "weddings & events": "sofia@two.travel",  # Bodas
    
 }
