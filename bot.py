@@ -1,183 +1,148 @@
-# bot.py
-import os, re, requests, time
 from fastapi import FastAPI, Request
-
-HUBSPOT_TOKEN = os.getenv("HUBSPOT_TOKEN")        # pat-xxxxx
-BASE_HS = "https://api.hubapi.com"
-HDRS = {"Authorization": f"Bearer {HUBSPOT_TOKEN}", "Content-Type": "application/json"}
-
-# ======== memoria de sesión (usa Redis en prod) ========
-SESS = {}  # { phone: {"step": "...", "contact_id": "...", "deal_id": "...", "lang": "ES"} }
+import requests, os
 
 app = FastAPI()
 
-# ---------- utilidades HubSpot ----------
-def hs_find_owner_id(owner_email:str):
-    r = requests.get(f"{BASE_HS}/crm/v3/owners", headers=HDRS, params={"email": owner_email, "archived":"false"})
-    r.raise_for_status()
-    res = r.json().get("results", [])
-    return res[0]["id"] if res else None
+# === CONFIG ===
+HUBSPOT_TOKEN = os.getenv("HUBSPOT_TOKEN")
+DEFAULT_OWNER_EMAIL = os.getenv("DEFAULT_OWNER_EMAIL", "rey@twotravel.com")
 
-def hs_upsert_contact(phone:str, name=None, email=None, lang=None):
-    # Busca por teléfono o email
-    cid = None
-    if email:
-        s = requests.post(f"{BASE_HS}/crm/v3/objects/contacts/search", headers=HDRS,
-                          json={"filterGroups":[{"filters":[{"propertyName":"email","operator":"EQ","value":email}]}]})
-        s.raise_for_status()
-        r = s.json().get("results", [])
-        if r: cid = r[0]["id"]
-    if not cid:
-        s = requests.post(f"{BASE_HS}/crm/v3/objects/contacts/search", headers=HDRS,
-                          json={"filterGroups":[{"filters":[{"propertyName":"phone","operator":"EQ","value":phone}]}]})
-        s.raise_for_status(); r=s.json().get("results", [])
-        if r: cid = r[0]["id"]
+HUBSPOT_BASE = "https://api.hubapi.com"
 
-    props = {}
-    if email: props["email"]=email
-    if phone: props["phone"]=phone
-    if name:
-        parts = name.strip().split()
-        props["firstname"]=parts[0]
-        props["lastname"]=" ".join(parts[1:]) if len(parts)>1 else ""
-    if lang: props["language"]=lang
 
-    if cid:
-        requests.patch(f"{BASE_HS}/crm/v3/objects/contacts/{cid}", headers=HDRS, json={"properties":props}).raise_for_status()
-        return cid
-    c = requests.post(f"{BASE_HS}/crm/v3/objects/contacts", headers=HDRS, json={"properties":props})
-    c.raise_for_status()
-    return c.json()["id"]
+# === HELPERS ===
+def get_owner_id(email: str):
+    """Busca el ID del dueño en HubSpot por email"""
+    url = f"{HUBSPOT_BASE}/crm/v3/owners/"
+    headers = {"Authorization": f"Bearer {HUBSPOT_TOKEN}"}
+    r = requests.get(url, headers=headers)
+    if r.status_code == 200:
+        for o in r.json().get("results", []):
+            if o.get("email") == email:
+                return o.get("id")
+    return None
 
-def hs_create_or_update_deal(contact_id:str, owner_email:str, service_type:str,
-                             city=None, start=None, end=None, pax=None, deal_id=None):
-    owner_id = hs_find_owner_id(owner_email)
-    props = {
-        "dealname": f"{service_type} – {int(time.time())}",
-        "pipeline": "default",
-        "dealstage": "appointmentscheduled",
-        "hubspot_owner_id": owner_id,
-        "service_type": service_type,
+
+def create_contact(name, email, phone):
+    """Crea contacto en HubSpot"""
+    url = f"{HUBSPOT_BASE}/crm/v3/objects/contacts"
+    headers = {
+        "Authorization": f"Bearer {HUBSPOT_TOKEN}",
+        "Content-Type": "application/json",
     }
-    if city: props["city"]=city
-    if start: props["start_date"]=start
-    if end: props["end_date"]=end
-    if pax: props["pax"]=str(pax)
+    payload = {
+        "properties": {
+            "firstname": name.split()[0],
+            "lastname": " ".join(name.split()[1:]) if len(name.split()) > 1 else "",
+            "email": email,
+            "phone": phone,
+        }
+    }
+    r = requests.post(url, headers=headers, json=payload)
+    return r.json()
 
-    if deal_id:
-        requests.patch(f"{BASE_HS}/crm/v3/objects/deals/{deal_id}", headers=HDRS, json={"properties":props}).raise_for_status()
-        return deal_id
 
-    d = requests.post(f"{BASE_HS}/crm/v3/objects/deals", headers=HDRS, json={"properties":props})
-    d.raise_for_status()
-    deal_id = d.json()["id"]
-    # asociar contacto
-    requests.put(f"{BASE_HS}/crm/v3/objects/deals/{deal_id}/associations/contacts/{contact_id}/deal_to_contact",
-                 headers=HDRS).raise_for_status()
-    return deal_id
+def create_deal(service_type, city, start, end, pax, language, owner_email):
+    """Crea deal en HubSpot"""
+    owner_id = get_owner_id(owner_email) or get_owner_id(DEFAULT_OWNER_EMAIL)
+    url = f"{HUBSPOT_BASE}/crm/v3/objects/deals"
+    headers = {
+        "Authorization": f"Bearer {HUBSPOT_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "properties": {
+            "dealname": f"{service_type} - {city}",
+            "pipeline": "default",
+            "dealstage": "appointmentscheduled",  # <- cambia según tu pipeline
+            "service_type": service_type,
+            "city": city,
+            "start_date": start,
+            "end_date": end,
+            "pax": pax,
+            "language": language,
+            "hubspot_owner_id": owner_id,
+        }
+    }
+    r = requests.post(url, headers=headers, json=payload)
+    return r.json()
 
-# ---------- WhatsApp (simulado) ----------
-def send_wpp(to:str, text:str):
-    # Aquí luego llamas a la API real de WhatsApp (Meta/360/Twilio)
-    print(f"[WPP → {to}] {text}")
 
-EMAIL_REGEX = r"^[^\s@]+@[^\s@]+\.[^\s@]+$"
+# === ESTADO EN MEMORIA (simulación de flujo) ===
+user_sessions = {}
 
-def next_step(phone, text):
-    s = SESS.setdefault(phone, {"step":"lang", "lang":None})
 
-    # Paso: idioma
-    if s["step"]=="lang":
-        if text.strip().lower().startswith("en"):
-            s["lang"]="EN"; send_wpp(phone, "Hi! What's your full name?")
-        else:
-            s["lang"]="ES"; send_wpp(phone, "¡Hola! ¿Tu nombre completo?")
-        s["step"]="name"
-        return
-
-    # Nombre
-    if s["step"]=="name":
-        if len(text.strip().split())<2:
-            send_wpp(phone, "¿Me confirmas nombre y apellido?") if s["lang"]=="ES" else send_wpp(phone,"Could you share name and last name?")
-            return
-        s["name"]=text.strip()
-        # contacto parcial
-        cid = hs_upsert_contact(phone=phone, name=s["name"])
-        s["contact_id"]=cid
-        send_wpp(phone, "¿Cuál es tu correo?") if s["lang"]=="ES" else send_wpp(phone,"What's your email?")
-        s["step"]="email"
-        return
-
-    # Email
-    if s["step"]=="email":
-        if not re.match(EMAIL_REGEX, text.strip(), re.I):
-            send_wpp(phone, "Ese correo no parece válido, ¿puedes revisarlo?") if s["lang"]=="ES" else send_wpp(phone,"That email looks invalid, mind checking it?")
-            return
-        s["email"]=text.strip().lower()
-        # update contacto
-        hs_upsert_contact(phone=phone, name=s.get("name"), email=s["email"], lang=s["lang"])
-        # menú
-        menu_es = "¿Qué necesitas hoy?\n1) Villas\n2) Boats\n3) Weddings\n4) Concierge\n5) Hablar con ventas"
-        menu_en = "What do you need today?\n1) Villas\n2) Boats\n3) Weddings\n4) Concierge\n5) Talk to sales"
-        send_wpp(phone, menu_es if s["lang"]=="ES" else menu_en)
-        s["step"]="menu"
-        return
-
-    # Menú → crea Deal y asigna dueño
-    if s["step"]=="menu":
-        opts = {"1":"Villas & Homes","2":"Boats & Yachts","3":"Weddings & Events","4":"Concierge","5":"Sales"}
-        choice = opts.get(text.strip())
-        if not choice:
-            send_wpp(phone, "Elige 1–5, por favor.") if s["lang"]=="ES" else send_wpp(phone,"Choose 1–5, please.")
-            return
-        s["service_type"]=choice
-        # crea deal ya mismo (dueño: cambia por tu regla/routeo)
-        owner_email = os.getenv("DEFAULT_OWNER_EMAIL","ventas@tutravel.com")
-        s["deal_id"]=hs_create_or_update_deal(
-            contact_id=s["contact_id"],
-            owner_email=owner_email,
-            service_type=s["service_type"]
-        )
-        # sigue preguntas por servicio (ejemplo boats)
-        if choice=="Boats & Yachts":
-            send_wpp(phone, "Ciudad/puerto de salida (ej: Cartagena)?"); s["step"]="boats_city"; return
-        # … agrega ramas para Villas/Weddings/Concierge …
-        send_wpp(phone, "Cuéntame la ciudad"); s["step"]="generic_city"; return
-
-    # Ejemplo rama Boats
-    if s["step"]=="boats_city":
-        s["city"]=text.strip()
-        hs_create_or_update_deal(s["contact_id"], os.getenv("DEFAULT_OWNER_EMAIL","ventas@tutravel.com"),
-                                 s["service_type"], city=s["city"], deal_id=s["deal_id"])
-        send_wpp(phone, "Fecha del paseo (YYYY-MM-DD)?"); s["step"]="boats_date"; return
-
-    if s["step"]=="boats_date":
-        s["start_date"]=text.strip()
-        hs_create_or_update_deal(s["contact_id"], os.getenv("DEFAULT_OWNER_EMAIL","ventas@tutravel.com"),
-                                 s["service_type"], start=s["start_date"], deal_id=s["deal_id"])
-        send_wpp(phone, "¿Número de pasajeros?"); s["step"]="boats_pax"; return
-
-    if s["step"]=="boats_pax":
-        try: s["pax"]=int(text.strip())
-        except: send_wpp(phone,"Número, por favor."); return
-        hs_create_or_update_deal(s["contact_id"], os.getenv("DEFAULT_OWNER_EMAIL","ventas@tutravel.com"),
-                                 s["service_type"], pax=s["pax"], deal_id=s["deal_id"])
-        send_wpp(phone, "Listo 🙌 ¿Te conecto con ventas para confirmar disponibilidad y cotización final?")
-        s["step"]="handoff"; return
-
-    # Handoff
-    if s["step"]=="handoff":
-        send_wpp(phone, "Te conecto con el equipo. Gracias!") if s["lang"]=="ES" else send_wpp(phone,"Connecting you with sales, thanks!")
-        # aquí opcional: notificación interna / Slack / tarea en HS
-        return
-
+# === FLUJO DEL BOT ===
 @app.post("/whatsapp/webhook")
-async def wpp_webhook(req: Request):
+async def whatsapp_webhook(req: Request):
     body = await req.json()
-    # normaliza entrada (simulada): {"from":"+573001112233","text":"hola"}
-    phone = body.get("from")
-    text  = body.get("text","")
-    if not phone or not text:
-        return {"ok": False}
-    next_step(phone, text)
-    return {"ok": True}
+    msg = body.get("text", "").strip()
+    phone = body.get("from", "desconocido")
+
+    state = user_sessions.get(phone, {"step": "lang"})
+    step = state["step"]
+
+    if step == "lang":
+        user_sessions[phone] = {"step": "name"}
+        return {"reply": "¡Hola! Soy tu concierge virtual 🛎️✨. ¿Cuál es tu nombre completo?"}
+
+    elif step == "name":
+        state["name"] = msg
+        state["step"] = "email"
+        return {"reply": "Perfecto. Ahora dime tu correo electrónico 📧"}
+
+    elif step == "email":
+        state["email"] = msg
+        state["step"] = "service"
+        return {
+            "reply": "Genial. ¿Qué servicio necesitas hoy?\n1️⃣ Villas 🏠\n2️⃣ Botes 🚤\n3️⃣ Bodas 💍\n4️⃣ Concierge ✨"
+        }
+
+    elif step == "service":
+        choice = msg.lower()
+        mapping = {
+            "1": "Villas & Homes",
+            "2": "Boats & Yachts",
+            "3": "Weddings & Events",
+            "4": "Concierge",
+        }
+        state["service"] = mapping.get(choice, "Otro")
+        state["step"] = "city"
+        return {"reply": "¿En qué ciudad necesitas el servicio?"}
+
+    elif step == "city":
+        state["city"] = msg
+        state["step"] = "dates"
+        return {"reply": "¿Cuáles son las fechas? (ejemplo 2025-09-10 a 2025-09-15)"}
+
+    elif step == "dates":
+        if "a" in msg:
+            fechas = msg.split("a")
+            state["start"] = fechas[0].strip()
+            state["end"] = fechas[1].strip()
+        else:
+            state["start"] = msg.strip()
+            state["end"] = msg.strip()
+        state["step"] = "pax"
+        return {"reply": "¿Para cuántas personas es el servicio?"}
+
+    elif step == "pax":
+        state["pax"] = msg
+        state["step"] = "done"
+
+        # === CREAR CONTACTO Y DEAL EN HUBSPOT ===
+        create_contact(state["name"], state["email"], phone)
+        create_deal(
+            service_type=state["service"],
+            city=state["city"],
+            start=state["start"],
+            end=state["end"],
+            pax=state["pax"],
+            language="ES",
+            owner_email="rey@twotravel.com",  # 👈 Ajusta aquí la regla
+        )
+
+        user_sessions.pop(phone, None)  # limpiar sesión
+        return {"reply": "✅ Gracias. Te conecto ahora con un asesor para confirmar disponibilidad."}
+
+    return {"reply": "No entendí, ¿puedes repetir?"}
