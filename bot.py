@@ -12,16 +12,13 @@ HUBSPOT_BASE = "https://api.hubapi.com"
 SERVICE_OWNER_MAP = {
     # Solo definimos los servicios que tienen dueño fijo
     "weddings & events": "sofia@two.travel",  # Bodas
-    # Si quieres, puedes añadir otros servicios aquí
-    # "villas & homes": "alguien@two.travel",
-    # "boats & yachts": "alguien@two.travel",
-    # "concierge": "alguien@two.travel",
+   
 }
 
 CITY_OWNER_MAP = {
     "medellin":  "ross@two.travel",
     "cartagena": "sofia@two.travel",
-    "mexico":    "ray@two.travel",   # México → Ray
+    "mexico":    "ray@two.travel",   
 }
 
 DEFAULT_OWNER_EMAIL = os.getenv("DEFAULT_OWNER_EMAIL", "ray@two.travel")  # fallback
