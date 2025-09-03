@@ -140,22 +140,13 @@ def create_or_update_deal(contact_id: str, service_type: str, city: str, start: 
     owner_email_final = resolve_owner_email(service_type, city, fallback=owner_email)
     owner_id = get_owner_id(owner_email_final) or get_owner_id(DEFAULT_OWNER_EMAIL)
 
-    # ← NUEVO: resolver IDs internos por etiqueta
-    # Cambia estos strings si tu pipeline o stage se llaman distinto en UI
-    PIPELINE_LABEL = "B2C Sales"
-    STAGE_LABEL = "Requirements Received"
-    pipeline_id, stage_id = get_pipeline_and_stage_ids(PIPELINE_LABEL, STAGE_LABEL)
-
-    # Fallbacks si no se encuentran (evita romper la creación)
-    if not pipeline_id:
-        pipeline_id = "default"            # o el id que ya usabas
-    if not stage_id:
-        stage_id = "appointmentscheduled"  # algún stage existente como respaldo
+    PIPELINE_ID = "default"                 # o el ID real de tu pipeline B2C Sales
+    STAGE_ID    = "appointmentscheduled"    # Internal id del stage “Requirements Received”
 
     props = {
         "dealname": f"{service_type} – {city or 'Sin ciudad'}",
-        "pipeline": pipeline_id,      # ← usar ID interno del pipeline
-        "dealstage": stage_id,        # ← usar ID interno del stage
+        "pipeline": PIPELINE_ID,
+        "dealstage": STAGE_ID,
         "service_type": service_type,
         "city": city,
         "start_date": start,
