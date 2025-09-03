@@ -21,8 +21,6 @@ CITY_OWNER_MAP = {
     "mexico":    "ray@two.travel",   
 }
 
-DEFAULT_OWNER_EMAIL = os.getenv("DEFAULT_OWNER_EMAIL", "ray@two.travel")  # fallback
-
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
